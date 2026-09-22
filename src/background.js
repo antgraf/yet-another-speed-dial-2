@@ -272,13 +272,17 @@ function isHttpLikeUrl(url) {
  * Wait until the tab has finished loading the real target page.
  * Important: windows.create often starts at about:blank with status "complete" —
  * resolving on that leaves us capturing/closing before the site renders.
+ * Poll as well as onUpdated: the load event is easy to miss if it fires before
+ * the listener is attached, and that used to sit until the full timeout.
  */
-function waitForTabComplete(tabId, expectedUrl, timeoutMs = 15000) {
+function waitForTabComplete(tabId, timeoutMs = 15000) {
     return new Promise((resolve) => {
         let settled = false;
+        let pollTimer = null;
+        const started = Date.now();
 
         const isReady = (tab) => {
-            if (!tab || tab.status !== 'complete') {
+            if (!tab) {
                 return false;
             }
             const current = tab.url || '';
@@ -286,7 +290,15 @@ function waitForTabComplete(tabId, expectedUrl, timeoutMs = 15000) {
             if (!current || current === 'about:blank') {
                 return false;
             }
-            return isHttpLikeUrl(current);
+            if (!isHttpLikeUrl(current)) {
+                return false;
+            }
+            if (tab.status === 'complete') {
+                return true;
+            }
+            // Many sites never reach "complete" (video, long-polling). Once the
+            // committed URL is real, a short grace period is enough to paint.
+            return Date.now() - started >= 2500;
         };
 
         const finish = () => {
@@ -294,28 +306,50 @@ function waitForTabComplete(tabId, expectedUrl, timeoutMs = 15000) {
             settled = true;
             chrome.tabs.onUpdated.removeListener(onUpdated);
             clearTimeout(timer);
+            if (pollTimer != null) clearTimeout(pollTimer);
             resolve();
         };
 
-        const onUpdated = (updatedTabId, changeInfo) => {
+        const consider = (tab) => {
+            if (isReady(tab)) finish();
+        };
+
+        const onUpdated = (updatedTabId, changeInfo, tab) => {
             if (updatedTabId !== tabId) return;
             if (changeInfo.status === 'complete' || changeInfo.url) {
-                chrome.tabs.get(tabId).then((tab) => {
-                    if (isReady(tab)) finish();
-                }).catch(() => {});
+                consider(tab);
+                if (!settled) {
+                    chrome.tabs.get(tabId).then(consider).catch(() => {});
+                }
             }
+        };
+
+        const poll = () => {
+            if (settled) return;
+            chrome.tabs.get(tabId).then((tab) => {
+                consider(tab);
+                if (!settled) pollTimer = setTimeout(poll, 300);
+            }).catch(() => {
+                if (!settled) pollTimer = setTimeout(poll, 300);
+            });
         };
 
         const timer = setTimeout(finish, timeoutMs);
         chrome.tabs.onUpdated.addListener(onUpdated);
-
-        chrome.tabs.get(tabId).then((tab) => {
-            if (isReady(tab)) finish();
-        }).catch(() => {});
+        poll();
     });
 }
 
 async function tryCaptureVisibleTab(windowId) {
+    // captureVisibleTab only snapshots the focused window. After the load wait
+    // the popup is often no longer focused, and the call fails with no image.
+    try {
+        await chrome.windows.update(windowId, { focused: true });
+    } catch (err) {
+        // Window may already be closing
+    }
+    await sleep(200);
+
     try {
         const screenshot = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
         if (typeof screenshot === 'string' && screenshot.startsWith('data:image/')) {
@@ -358,16 +392,15 @@ async function capturePopupScreenshot(url) {
         const tabId = popup.tabs[0].id;
         await chrome.tabs.update(tabId, { muted: true, active: true }).catch(() => {});
 
-        await waitForTabComplete(tabId, url);
+        await waitForTabComplete(tabId);
         // Allow paint / lazy content after load
-        await sleep(2000);
+        await sleep(1000);
 
-        let screenshot = await tryCaptureVisibleTab(popup.id);
-
-        if (!screenshot) {
-            // Ensure focus and retry once
-            await chrome.windows.update(popup.id, { focused: true }).catch(() => {});
-            await sleep(400);
+        let screenshot = null;
+        for (let attempt = 0; attempt < 3 && !screenshot; attempt++) {
+            if (attempt > 0) {
+                await sleep(400);
+            }
             screenshot = await tryCaptureVisibleTab(popup.id);
         }
 
@@ -598,12 +631,19 @@ async function getThumbnails(url, id, parentId, options = {quickRefresh: false, 
 	// Chrome: processThumbnailsViaOffscreen from js/chromeOffscreen.js (service worker + offscreen doc)
 	// Firefox: processThumbnails from offscreen.js via background.scripts (event page has DOM)
 	if (typeof processThumbnailsViaOffscreen === 'function') {
-		const ok = await processThumbnailsViaOffscreen(payload, () => {
-			if (options.forcePageReload) {
-				refreshOpen();
+		try {
+			const ok = await processThumbnailsViaOffscreen(payload, () => {
+				if (options.forcePageReload) {
+					refreshOpen();
+				}
+			});
+			if (ok !== false) {
+				return true;
 			}
-		});
-		return ok !== false;
+		} catch (err) {
+			// Don't drop a captured screenshot when offscreen setup throws
+			console.log('Offscreen thumbnail processing failed:', err?.message || err);
+		}
 	}
 	if (typeof processThumbnails === 'function') {
 		// Await so Firefox keeps the event page alive until save/refresh finishes
@@ -616,6 +656,11 @@ async function getThumbnails(url, id, parentId, options = {quickRefresh: false, 
 			}
 			return false;
 		}
+		return true;
+	}
+
+	if (screenshot) {
+		await saveThumbnails(url, id, parentId, [screenshot], null, options.forcePageReload);
 		return true;
 	}
 

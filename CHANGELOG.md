@@ -12,7 +12,8 @@
 - Prefer generated screenshots as the default tile image when available
 - Documentation, attribution, and asset cleanup for the fork
 - Add Firefox-compatible `background.scripts` fallback for AMO validation
-- Drop Chromium-only `offscreen` permission from the shared manifest; run thumbnail DOM parsing inline on Firefox
+- Keep the `offscreen` permission in the shared manifest so unpacked Chrome can create the thumbnail document; the Firefox pack strips it and parses thumbnails in the event page
+- Fix manual thumbnail refresh: `chrome.offscreen` was undefined without that permission (`createDocument`), so a captured popup screenshot was discarded after the load timeout
 - Fix Firefox thumbnail capture: avoid `handleMessages` name clash on the shared event page; await processing so the page stays alive
 - Declare Firefox `data_collection_permissions` (`none`); `strict_min_version` 140 (desktop) / 142 (Android)
 - Move Chrome-only `offscreen` APIs into `js/chromeOffscreen.js` (omitted from the Firefox AMO package)

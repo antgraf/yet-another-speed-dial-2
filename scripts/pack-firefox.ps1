@@ -3,7 +3,7 @@
 #
 # Shared src/manifest.json is Chrome-first (service_worker only). This script:
 # - replaces background.service_worker with background.scripts for Firefox
-# - omits Chrome-only js/chromeOffscreen.js
+# - omits Chrome-only js/chromeOffscreen.js and the offscreen permission
 
 $ErrorActionPreference = 'Stop'
 
@@ -39,6 +39,8 @@ if (Test-Path $chromeOffscreen) {
 
 $manifestPath = Join-Path $stageDir 'manifest.json'
 $manifest = Get-Content $manifestPath -Raw
+# AMO rejects the Chromium-only offscreen permission. Chrome unpacked src/ keeps it.
+$manifest = $manifest -replace '(?m)^\s*"offscreen",\r?\n', ''
 $firefoxBackground = @'
   "background": {
     "scripts": [
@@ -58,6 +60,9 @@ if ($parsed.background.service_worker) {
 }
 if (-not $parsed.background.scripts) {
     throw 'Firefox package missing background.scripts'
+}
+if ($parsed.permissions -contains 'offscreen') {
+    throw 'Firefox package must not include the offscreen permission'
 }
 
 if (Test-Path $zipPath) {

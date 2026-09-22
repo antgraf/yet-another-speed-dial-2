@@ -1,8 +1,8 @@
 # Build the Chrome Web Store package into dist/yasd2-<version>-chrome.zip
 # Usage: pwsh -File scripts/pack-chrome.ps1
 #
-# Shared src/manifest.json already uses service_worker only. This script adds
-# the Chromium-only `offscreen` permission required for thumbnail DOM parsing.
+# Shared src/manifest.json is Chrome-first (service_worker + offscreen).
+# This script verifies the offscreen permission survived packaging.
 
 $ErrorActionPreference = 'Stop'
 

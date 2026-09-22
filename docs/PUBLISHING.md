@@ -6,8 +6,8 @@ Store submissions must be done from your developer accounts. This repo is prepar
 
 Release zips are built from `src/` (manifest at zip root). The shared `src/manifest.json` is **Chrome-first** (`background.service_worker` only — loading `src/` unpacked in Chrome no longer warns about `background.scripts`). Pack scripts adjust per store:
 
-- Chromium package adds `offscreen` (keeps `service_worker` + `js/chromeOffscreen.js`)
-- Firefox package swaps in `background.scripts` and omits Chrome-only offscreen APIs
+- Chromium package keeps `service_worker`, `js/chromeOffscreen.js`, and the `offscreen` permission (already in `src/manifest.json` so unpacked Chrome loads can capture thumbnails)
+- Firefox package swaps in `background.scripts`, drops `js/chromeOffscreen.js`, and strips the `offscreen` permission
 
 From the repo root:
 
@@ -21,7 +21,7 @@ Outputs (version taken from `src/manifest.json`):
 - `dist/yasd2-<version>-firefox.zip`
 - `dist/yasd2-<version>-chrome.zip`
 
-Staging folders `dist/firefox-src` and `dist/chrome-src` are also written. For local Chrome unpacked testing with working thumbnails, load `dist/chrome-src` after packing (includes the `offscreen` permission). Loading plain `src/` in Chrome is fine for UI smoke tests but thumbnail DOM parsing needs `offscreen`.
+Staging folders `dist/firefox-src` and `dist/chrome-src` are also written. Load unpacked `src/` in Chrome for local testing (the shared manifest includes `offscreen`). Load `dist/firefox-src` for Firefox; that package strips `offscreen` and parses thumbnails in the background event page.
 
 AMO may still warn about `innerHTML` inside vendored `js/lib/*` (jQuery, Coloris); those are expected and non-blocking.
 
